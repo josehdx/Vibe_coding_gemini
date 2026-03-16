@@ -12,9 +12,8 @@
 //=================================================================================
 
 #include <Arduino.h>
-#include <Control_Surface.h>
+#include <Control_Surface.h> // I have the 2.0.0 installed -- I'm not currently using 2.1.0
 #include <AH/Hardware/MultiPurposeButton.hpp>
-
 
 //=================================================================================
 
@@ -156,36 +155,53 @@ void calibrateCenterAndDeadzone() {
 
 
 void adjustPB() {
-
-  //The 12 bit getValue is used only for the continous send on low and high. Otherwise, not needed.
-  uint32_t pbGetValue = potPB.getValue(); // This is a 12 bit value (0 to 4095)
-
-  //We need to use the 14 bit full value provided by getRawValue to do the deadzone magic.
-  uint32_t pbGetRawValue = potPB.getRawValue(); // This is a 14 bit value (0 to 16383)
+  // 12-bit value (0 to 4095) for boundary checks
+  uint32_t pbGetValue = potPB.getValue(); 
+  
+  // 14-bit value (0 to 16383) for mapping logic
+  uint32_t pbGetRawValue = potPB.getRawValue(); 
   analog_t pbMapRawValue = map_PB(pbGetRawValue);
 
-  //Continuous send on low -- OPTIONAL
-  if (pbGetValue==0) { Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 0); }
+  // Track if we have already "locked" to a boundary to prevent flooding
+  static bool lockedAtMin = false;
+  static bool lockedAtMax = false;
 
-  //If it was off center, but now back to center, force a zero (center)
-  if (pbMapRawValue==8192 && PBwasOffCenter) {
-    //Serial.print("RE-CENTER REQUEST...");
-    //Throttle this behavior. Say, X times in last Y seconds? (like flash update delay).
-    if ( (millis()-PBlastCenteredOn) > (FORCE_CENTER_UPDATE_DELAY) ) { 
-      Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 8192);
+  // --- LOW BOUNDARY (0) ---
+  if (pbGetValue == 0) {
+    if (!lockedAtMin) {
+      Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)0);
+      lockedAtMin = true; // Stop further sends until we move away from 0
+      Serial.println("[LIMIT: MIN]");
+    }
+  } else {
+    lockedAtMin = false;
+  }
+
+  // --- RE-CENTERING LOGIC ---
+  if (pbMapRawValue == 8192 && PBwasOffCenter) {
+    if ((millis() - PBlastCenteredOn) > (FORCE_CENTER_UPDATE_DELAY)) { 
+      Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)8192);
       PBwasOffCenter = false;
       PBlastCenteredOn = millis();
       Serial.println("[FORCE MIDI CENTER]");
     }
   }
 
-  //continuous send on high -- OPTIONAL
-  if (pbGetValue==8192) { Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 16383); }
-
-}//adjustPB
+  // --- HIGH BOUNDARY (16383) ---
+  // Note: Using 4095 because pbGetValue is 12-bit
+  if (pbGetValue == 4095) { 
+    if (!lockedAtMax) {
+      Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)16383);
+      lockedAtMax = true; // Stop further sends until we move away from max
+      Serial.println("[LIMIT: MAX]");
+    }
+  } else {
+    lockedAtMax = false;
+  }
+}
 
 //=================================================================================
-
+/*
 void debugPrint() {
   //Optional -- if you want to check on what analogRead is really providing
   //The resolution (7, 10, 12, 14, 16) will depend on your MCUs ADC
@@ -205,7 +221,7 @@ void debugPrint() {
   Serial.print(potPB.getValue()); Serial.print("\t");
   Serial.println();
 }
-
+*/
 //=================================================================================
 
 
@@ -215,7 +231,7 @@ void setup() {
   //For debugging output
   Serial.begin(SERIAL_BAUDRATE); // this is the serial debug baud rate -- NOT MIDI
 
-  btmidi.setName("Banana_s3"); //bt device name  
+  btmidi.setName("Banana"); //bt device name  
 
 
   //Setup Control_Surface filters
@@ -257,7 +273,7 @@ void loop() {
 
   adjustPB(); // Handles re-centering
 
-  debugPrint(); 
+  //debugPrint(); 
 
   yield(); delay(1); // helpful for chips with watchdog timers, short pause to allow other tasks to catch up
   
@@ -266,4 +282,3 @@ void loop() {
 //=================================================================================
 //=================================================================================
 //=================================================================================
-
